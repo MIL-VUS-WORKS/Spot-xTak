@@ -15,12 +15,6 @@
 # The pin's callsign is "<messengerName> <dateTime>" so the marker name
 # always shows the device and the time of its last report.
 #
-# Usage:
-#   python3 spot-xtak.py                  # uses ./config.ini
-#   python3 spot-xtak.py -c /path/to.ini  # explicit config file
-#
-# Requires: pytak, aiohttp  (and cryptography for .p12 certificates)
-#   python3 -m pip install pytak aiohttp cryptography
 
 """SPOT Satellite Tracker to TAK (CoT) gateway."""
 
