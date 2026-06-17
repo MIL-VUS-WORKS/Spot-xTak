@@ -1,0 +1,7 @@
+This directory holds TLS materials for connecting to the TAK Server.
+
+Place the following here (these are NOT committed to git):
+  - client certificate / key (e.g. client.p12 or client.pem)
+  - truststore-root.p12  (TAK Server CA truststore)
+
+Real certificates and keys must never be checked into version control.
