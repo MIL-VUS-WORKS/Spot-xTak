@@ -1,22 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#
-# spot-xtak.py
-#
-# SPOT Satellite Tracker -> TAK gateway built on PyTAK.
-#
-# Polls the SPOT public XML feed ("message" endpoint) at a configurable
-# interval, keeps only the newest position-bearing message per device,
-# extracts <messengerName>, <latitude>, <longitude>, <dateTime>,
-# <altitude> and <batteryState>, and pushes a CoT event (map pin) to a
-# TAK Server over TLS.
-#
-#
-# The pin's callsign is "<messengerName> <dateTime>" so the marker name
-# always shows the device and the time of its last report.
-#
-
-"""SPOT Satellite Tracker to TAK (CoT) gateway."""
 
 import argparse
 import asyncio
@@ -41,14 +24,8 @@ SPOT_API_BASE = (
     "https://api.findmespot.com/spot-main-web/consumer/rest-api/2.0/public/feed"
 )
 
-# SPOT marks messages without a GPS fix with this sentinel coordinate.
 SPOT_NO_FIX = -99999.0
 
-# Message types that carry a real position worth placing on the map.
-# HELP is intentionally included: it is an emergency message and carries a
-# valid lat/lon, so it is arguably the most important pin to show.
-# HELP-CANCEL and STOP carry no fix and are excluded (and are also caught
-# by the no-fix coordinate guard regardless).
 POSITION_TYPES = {
     "OK",
     "TRACK",
@@ -61,24 +38,17 @@ POSITION_TYPES = {
 }
 
 DEFAULTS = {
-    "SPOT_FEED_KEY_FILE": "spot_feed_id.txt",  # plain-text file w/ the feed ID
-    "SPOT_FEED_PASSWORD": "",                  # optional ?feedPassword=
-    "SPOT_POLL_INTERVAL": "150",               # seconds between API calls
-    "SPOT_COT_TYPE": "a-f-G-E-S",              # CoT type for the pin
-    "SPOT_COT_STALE": "",                      # seconds; empty = 2x interval
+    "SPOT_FEED_KEY_FILE": "spot_feed_id.txt",
+    "SPOT_FEED_PASSWORD": "",
+    "SPOT_POLL_INTERVAL": "150",
+    "SPOT_COT_TYPE": "a-f-G-E-S",
+    "SPOT_COT_STALE": "",
 }
 
 
 def read_feed_key(path: str) -> str:
-    """Read the SPOT XML feed ID from a plain-text file next to the script.
-
-    The file should contain only the feed ID (GLID), e.g.:
-        0abcdEFGHijkLMNopQRstuVWxyz1234AB
-    Whitespace and blank lines are ignored.
-    """
     key_path = Path(path)
     if not key_path.is_absolute():
-        # Resolve relative to the script directory, per requirement.
         key_path = Path(__file__).resolve().parent / key_path
     if not key_path.exists():
         raise FileNotFoundError(
@@ -92,13 +62,6 @@ def read_feed_key(path: str) -> str:
 
 
 def maybe_convert_truststore(config) -> None:
-    """Convert a .p12 truststore to PEM if needed.
-
-    PyTAK loads PYTAK_TLS_CLIENT_CAFILE with load_verify_locations(),
-    which expects PEM. TAK Server typically hands out truststore-root.p12,
-    so if the configured CA file ends in .p12 we extract the CA certs to a
-    temporary PEM file and point PyTAK at that instead.
-    """
     cafile = config.get("PYTAK_TLS_CLIENT_CAFILE", "")
     if not cafile or not cafile.lower().endswith((".p12", ".pfx")):
         return
@@ -150,12 +113,9 @@ def spot_to_cot(
     altitude: str = "",
     battery_state: str = "",
 ) -> bytes:
-    """Render one SPOT report as a CoT <event/> XML document."""
     uid = f"SPOT.{messenger_name}"
     callsign = f"{messenger_name} {date_time}"
 
-    # SPOT altitude is in meters (HAE in CoT). Default to 0.0 if absent
-    # or unparseable.
     try:
         hae = str(float(altitude)) if altitude else "0.0"
     except ValueError:
@@ -191,13 +151,6 @@ def spot_to_cot(
 
 
 class SpotWorker(pytak.QueueWorker):
-    """Polls the SPOT 'message' feed and enqueues CoT events.
-
-    Uses the 'message' endpoint (not 'latest', which is unreliable),
-    dedupes to the newest position-bearing message per device, and
-    enqueues one CoT pin per device.
-    """
-
     def __init__(self, queue, config):
         super().__init__(queue, config)
         self.feed_id = read_feed_key(config.get("SPOT_FEED_KEY_FILE"))
@@ -219,15 +172,12 @@ class SpotWorker(pytak.QueueWorker):
         return url
 
     async def handle_data(self, data: bytes) -> None:
-        """Parse the SPOT XML response and enqueue one CoT per device."""
         try:
             root = ET.fromstring(data)
         except ET.ParseError as exc:
             self._logger.warning("Unparseable SPOT response: %s", exc)
             return
 
-        # SPOT returns <response><errors>...</errors></response> for
-        # "no messages in the last 7 days", bad feed ID, throttling, etc.
         error = root.find(".//errors/error")
         if error is not None:
             code = error.findtext("code", "?")
@@ -242,9 +192,6 @@ class SpotWorker(pytak.QueueWorker):
             self._logger.info("SPOT feed returned no messages.")
             return
 
-        # message.xml returns up to 50 messages, multiple per device,
-        # newest-first. Filter to position-bearing types and keep only the
-        # newest (highest unixTime) message per device.
         latest_by_device = {}
         for msg in messages:
             msg_type = msg.findtext("messageType", "")
@@ -282,7 +229,6 @@ class SpotWorker(pytak.QueueWorker):
                 self._logger.warning("Bad coordinates for %s, skipping.", name)
                 continue
 
-            # Safety net: even allowed types could lack a GPS fix.
             if lat <= -999.0 or lon <= -999.0:
                 self._logger.info(
                     "%s: latest message (%s) has no GPS fix, skipping.",
@@ -312,10 +258,6 @@ class SpotWorker(pytak.QueueWorker):
             await self.put_queue(cot)
 
     async def poll_once(self, session: aiohttp.ClientSession) -> None:
-        # Request only gzip/deflate. SPOT will otherwise return Brotli
-        # (Content-Encoding: br), which aiohttp can only decode if a
-        # compatible Brotli library is installed; gzip/deflate are handled
-        # natively with no extra dependency.
         async with session.get(
             self.feed_url,
             timeout=aiohttp.ClientTimeout(total=30),
@@ -332,7 +274,7 @@ class SpotWorker(pytak.QueueWorker):
         self._logger.info(
             "Polling SPOT feed every %ss -> %s",
             self.poll_interval,
-            self.feed_url.split("?")[0],  # don't log the password
+            self.feed_url.split("?")[0],
         )
         async with aiohttp.ClientSession() as session:
             while True:
@@ -340,7 +282,7 @@ class SpotWorker(pytak.QueueWorker):
                     await self.poll_once(session)
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:  # keep the gateway alive
+                except Exception as exc:
                     self._logger.warning("Poll failed: %s", exc)
                 await asyncio.sleep(self.poll_interval)
 
