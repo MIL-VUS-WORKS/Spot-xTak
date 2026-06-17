@@ -11,11 +11,6 @@
 # <altitude> and <batteryState>, and pushes a CoT event (map pin) to a
 # TAK Server over TLS.
 #
-# NOTE: This uses the "message" endpoint, not "latest". The SPOT "latest"
-# endpoint is unreliable and can return "No Messages to display" (E-0195)
-# even when the feed clearly has recent data. "message" returns up to 50
-# messages (multiple per device, newest-first), so this script dedupes to
-# the most recent message per device before producing pins.
 #
 # The pin's callsign is "<messengerName> <dateTime>" so the marker name
 # always shows the device and the time of its last report.
